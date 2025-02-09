@@ -1,17 +1,22 @@
 import port.api.props as props
 from port.api.assets import *
-from port.api.commands import (CommandSystemDonate, CommandSystemExit, CommandUIRender)
+from port.api.commands import CommandSystemDonate, CommandSystemExit, CommandUIRender
 
 import pandas as pd
 import zipfile
 import json
 import time
+from urllib.parse import urlparse, parse_qs
+
+# Use timezone-aware timestamps for comparison
+start_dt = pd.to_datetime("2025-01-12").tz_localize("CET")
+end_dt = pd.to_datetime("2025-03-02").tz_localize("CET") + pd.Timedelta(
+    days=1
+)  # Include all of March 2nd
 
 
 def process(sessionId):
-    print(read_asset("hello_world.txt"))
-
-    key = "zip-contents-example"
+    key = "google-search-history"
     meta_data = []
     meta_data.append(("debug", f"{key}: start"))
 
@@ -19,94 +24,113 @@ def process(sessionId):
     data = None
     while True:
         meta_data.append(("debug", f"{key}: prompt file"))
-        promptFile = prompt_file("application/zip, text/plain")
+        promptFile = prompt_file("application/zip")
         fileResult = yield render_donation_page(promptFile)
-        if fileResult.__type__ == 'PayloadString':
-            # Extracting the zipfile
-            meta_data.append(("debug", f"{key}: extracting file"))
-            extraction_result = []
-            zipfile_ref = get_zipfile(fileResult.value)
-            print(zipfile_ref, fileResult.value)
-            files = get_files(zipfile_ref)
-            fileCount = len(files)
-            for index, filename in enumerate(files):
-                percentage = ((index+1)/fileCount)*100
-                promptMessage = prompt_extraction_message(f"Extracting file: {filename}", percentage)   
-                yield render_donation_page(promptMessage)   
-                file_extraction_result = extract_file(zipfile_ref, filename)
-                extraction_result.append(file_extraction_result)
 
-            if len(extraction_result) >= 0:
-                meta_data.append(("debug", f"{key}: extraction successful, go to consent form"))
-                data = extraction_result
+        if fileResult.__type__ == "PayloadString":
+            try:
+                # Try to find and extract Google Takeout data
+                meta_data.append(("debug", f"{key}: searching for Google Takeout data"))
+                zipfile_ref = get_zipfile(fileResult.value)
+
+                if zipfile_ref == "invalid":
+                    raise Exception("Invalid zip file")
+
+                # Find and parse the Google Search export
+                json_data = find_google_search_export(zipfile_ref)
+                meta_data.append(("debug", f"{key}: found valid Google Takeout data"))
+
+                # Extract search history and clicks into dataframes
+                meta_data.append(("debug", f"{key}: extracting search history"))
+                data = extract_search_data(json_data)
                 break
-            else:
-                meta_data.append(("debug", f"{key}: prompt confirmation to retry file selection"))
+
+            except GoogleTakeoutNotFoundError:
+                meta_data.append(
+                    ("debug", f"{key}: no valid Google Takeout data found")
+                )
                 retry_result = yield render_donation_page(retry_confirmation())
-                if retry_result.__type__ == 'PayloadTrue':
-                    meta_data.append(("debug", f"{key}: skip due to invalid file"))
+                if retry_result.__type__ == "PayloadTrue":
                     continue
                 else:
-                    meta_data.append(("debug", f"{key}: retry prompt file"))
+                    meta_data.append(("debug", f"{key}: user cancelled"))
+                    break
+            except Exception as e:
+                meta_data.append(("debug", f"{key}: error processing file - {str(e)}"))
+                retry_result = yield render_donation_page(retry_confirmation())
+                if retry_result.__type__ == "PayloadTrue":
+                    continue
+                else:
+                    meta_data.append(("debug", f"{key}: user cancelled"))
                     break
 
     # STEP 2: ask for consent
-    meta_data.append(("debug", f"{key}: prompt consent"))
-    prompt = prompt_consent(data, meta_data)
-    consent_result = yield render_donation_page(prompt)
-    if consent_result.__type__ == "PayloadJSON":
-        meta_data.append(("debug", f"{key}: donate consent data"))
-        yield donate(f"{sessionId}-{key}", consent_result.value)
-    if consent_result.__type__ == "PayloadFalse":   
-        value = json.dumps('{"status" : "donation declined"}')
-        yield donate(f"{sessionId}-{key}", value)
+    if data is not None:
+        meta_data.append(("debug", f"{key}: prompt consent"))
+        prompt = prompt_consent(data, meta_data)
+        consent_result = yield render_donation_page(prompt)
+        if consent_result.__type__ == "PayloadJSON":
+            meta_data.append(("debug", f"{key}: donate consent data"))
+            yield donate(f"{sessionId}-{key}", consent_result.value)
+        if consent_result.__type__ == "PayloadFalse":
+            value = json.dumps('{"status" : "donation declined"}')
+            yield donate(f"{sessionId}-{key}", value)
 
 
 def render_donation_page(body):
-    header = props.PropsUIHeader(props.Translatable({
-        "en": "Port flow example",
-        "de": "Port Beispiel",
-        "nl": "Port voorbeeld flow"
-    }))
+    header = props.PropsUIHeader(
+        props.Translatable(
+            {
+                "en": "Port flow example",
+                "de": "Port Beispiel",
+                "nl": "Port voorbeeld flow",
+            }
+        )
+    )
 
     page = props.PropsUIPageDonation("Zip", header, body)
     return CommandUIRender(page)
 
 
 def retry_confirmation():
-    text = props.Translatable({
-        "en": "Unfortunately, we cannot process your file. Continue, if you are sure that you selected the right file. Try again to select a different file.",
-        "de": "Leider können wir Ihre Datei nicht bearbeiten. Fahren Sie fort, wenn Sie sicher sind, dass Sie die richtige Datei ausgewählt haben. Versuchen Sie, eine andere Datei auszuwählen.",
-        "nl": "Helaas, kunnen we uw bestand niet verwerken. Weet u zeker dat u het juiste bestand heeft gekozen? Ga dan verder. Probeer opnieuw als u een ander bestand wilt kiezen."
-    })
-    ok = props.Translatable({
-        "en": "Try again",
-        "de": "Versuchen Sie es noch einmal",
-        "nl": "Probeer opnieuw"
-    })
-    cancel = props.Translatable({
-        "en": "Continue",
-        "de": "Weiter",
-        "nl": "Verder"
-    })
+    text = props.Translatable(
+        {
+            "en": "Unfortunately, we cannot process your file. Continue, if you are sure that you selected the right file. Try again to select a different file.",
+            "de": "Leider können wir Ihre Datei nicht bearbeiten. Fahren Sie fort, wenn Sie sicher sind, dass Sie die richtige Datei ausgewählt haben. Versuchen Sie, eine andere Datei auszuwählen.",
+            "nl": "Helaas, kunnen we uw bestand niet verwerken. Weet u zeker dat u het juiste bestand heeft gekozen? Ga dan verder. Probeer opnieuw als u een ander bestand wilt kiezen.",
+        }
+    )
+    ok = props.Translatable(
+        {
+            "en": "Try again",
+            "de": "Versuchen Sie es noch einmal",
+            "nl": "Probeer opnieuw",
+        }
+    )
+    cancel = props.Translatable({"en": "Continue", "de": "Weiter", "nl": "Verder"})
     return props.PropsUIPromptConfirm(text, ok, cancel)
 
 
 def prompt_file(extensions):
-    description = props.Translatable({
-        "en": "Please select any zip file stored on your device.",
-        "de": "Wählen Sie eine beliebige Zip-Datei aus, die Sie auf Ihrem Gerät gespeichert haben.",
-        "nl": "Selecteer een willekeurige zip file die u heeft opgeslagen op uw apparaat."
-    })
+    description = props.Translatable(
+        {
+            "en": "Please select any zip file stored on your device.",
+            "de": "Wählen Sie eine beliebige Zip-Datei aus, die Sie auf Ihrem Gerät gespeichert haben.",
+            "nl": "Selecteer een willekeurige zip file die u heeft opgeslagen op uw apparaat.",
+        }
+    )
 
     return props.PropsUIPromptFileInput(description, extensions)
 
+
 def prompt_extraction_message(message, percentage):
-    description = props.Translatable({
-        "en": "One moment please. Information is now being extracted from the selected file.",
-        "de": "Einen Moment bitte. Es werden nun Informationen aus der ausgewählten Datei extrahiert.",
-        "nl": "Een moment geduld. Informatie wordt op dit moment uit het geselecteerde bestaand gehaald."
-    })
+    description = props.Translatable(
+        {
+            "en": "One moment please. Information is now being extracted from the selected file.",
+            "de": "Einen Moment bitte. Es werden nun Informationen aus der ausgewählten Datei extrahiert.",
+            "nl": "Een moment geduld. Informatie wordt op dit moment uit het geselecteerde bestaand gehaald.",
+        }
+    )
 
     return props.PropsUIPromptProgress(description, message, percentage)
 
@@ -116,10 +140,10 @@ def get_zipfile(filename):
         return zipfile.ZipFile(filename)
     except zipfile.error:
         return "invalid"
-    
-   
+
+
 def get_files(zipfile_ref):
-    try: 
+    try:
         return zipfile_ref.namelist()
     except zipfile.error:
         return []
@@ -128,34 +152,45 @@ def get_files(zipfile_ref):
 def extract_file(zipfile_ref, filename):
     try:
         # make it slow for demo reasons only
-        time.sleep(1)
         info = zipfile_ref.getinfo(filename)
         return (filename, info.compress_size, info.file_size)
     except zipfile.error:
         return "invalid"
-    
+
 
 def prompt_consent(data, meta_data):
+    search_title = props.Translatable(
+        {
+            "en": "Search history",
+            "de": "Suchverlauf",
+            "nl": "Zoekgeschiedenis",
+        }
+    )
 
-    table_title = props.Translatable({
-        "en": "Zip file contents",
-        "de": "Inhalt der Zip-Datei",
-        "nl": "Inhoud zip bestand"
-    })
+    clicks_title = props.Translatable(
+        {
+            "en": "Clicked results",
+            "de": "Angeklickte Ergebnisse",
+            "nl": "Aangeklikte resultaten",
+        }
+    )
 
-    log_title = props.Translatable({
-        "en": "Log messages",
-        "de": "Log Nachrichten",
-        "nl": "Log berichten"
-    })
+    log_title = props.Translatable(
+        {"en": "Log messages", "de": "Log Nachrichten", "nl": "Log berichten"}
+    )
 
-    tables=[]
-    if data is not None:
-        data_frame = pd.DataFrame(data, columns=["filename", "compressed size", "size"])
-        tables = [props.PropsUIPromptConsentFormTable("zip_content", table_title, data_frame)]
+    tables = []
+    if isinstance(data, tuple) and len(data) == 2:
+        searches_df, clicks_df = data
+        tables = [
+            props.PropsUIPromptConsentFormTable("searches", search_title, searches_df),
+            props.PropsUIPromptConsentFormTable("clicks", clicks_title, clicks_df),
+        ]
 
     meta_frame = pd.DataFrame(meta_data, columns=["type", "message"])
-    meta_table = props.PropsUIPromptConsentFormTable("log_messages", log_title, meta_frame)
+    meta_table = props.PropsUIPromptConsentFormTable(
+        "log_messages", log_title, meta_frame
+    )
     return props.PropsUIPromptConsentForm(tables, [meta_table])
 
 
@@ -165,3 +200,141 @@ def donate(key, json_string):
 
 def exit(code, info):
     return CommandSystemExit(code, info)
+
+
+def is_google_search_url(url):
+    """
+    Determine if a URL is a Google search URL.
+    Accepts any Google TLD (e.g., google.com, google.de, google.nl)
+
+    Args:
+        url: URL string to check
+
+    Returns:
+        tuple: (is_search, query) where is_search is boolean and query is the search term or None
+    """
+    try:
+        parsed_url = urlparse(url)
+        # Check if domain is a Google domain (e.g., www.google.com, www.google.de)
+        if parsed_url.netloc.startswith("www.google.") and parsed_url.path == "/search":
+            query_params = parse_qs(parsed_url.query)
+            if "q" in query_params:
+                return True, query_params["q"][0]
+    except Exception:
+        pass
+    return False, None
+
+
+def extract_search_data(data):
+    if not isinstance(data, list):
+        return pd.DataFrame(columns=["date", "index", "query"]), pd.DataFrame(
+            columns=["date", "index", "title", "url"]
+        )
+
+    searches = []
+    clicks = []
+
+    def resolve_google_redirect(url):
+        parsed = urlparse(url)
+        if parsed.netloc.startswith("www.google.") and parsed.path == "/url":
+            query = parse_qs(parsed.query)
+            if "q" in query:
+                return query["q"][0]
+        return url
+
+    records = []
+    for item in data:
+        if not all(
+            key in item for key in ["header", "title", "titleUrl", "time", "products"]
+        ):
+            continue
+
+        timestamp = pd.to_datetime(item["time"])
+        if not (start_dt <= timestamp < end_dt):  # Changed <= to < for end_dt
+            continue
+
+        if item["title"].startswith("Viewed "):
+            continue
+
+        records.append(item)
+
+    for i, item in enumerate(records, start=1):
+        timestamp = pd.to_datetime(item["time"])
+        date = timestamp.strftime("%d-%m-%Y")
+        index = str(i)
+
+        final_url = resolve_google_redirect(item["titleUrl"])
+        is_search, query = is_google_search_url(final_url)
+        if is_search:
+            searches.append({"date": date, "index": index, "query": query})
+        else:
+            clicks.append(
+                {"date": date, "index": index, "title": item["title"], "url": final_url}
+            )
+
+    searches_df = pd.DataFrame(searches)
+    clicks_df = pd.DataFrame(clicks)
+
+    # Ensure columns exist even if dataframes are empty
+    searches_df = searches_df.reindex(columns=["date", "index", "query"])
+    clicks_df = clicks_df.reindex(columns=["date", "index", "title", "url"])
+
+    return searches_df, clicks_df
+
+
+class GoogleTakeoutNotFoundError(Exception):
+    """Raised when no valid Google Takeout data is found in the zip file"""
+
+    pass
+
+
+def find_google_search_export(zipfile_ref):
+    """
+    Find and validate Google Search export JSON files in a zip archive.
+    Validates only the JSON structure, not the content.
+
+    Args:
+        zipfile_ref: ZipFile object to search through
+
+    Returns:
+        list: The parsed JSON data if found
+
+    Raises:
+        GoogleTakeoutNotFoundError: If no valid Google Takeout data is found
+        Exception: For other errors during processing
+    """
+    try:
+        # Get all JSON files from the zip
+        json_files = [f for f in zipfile_ref.namelist() if f.lower().endswith(".json")]
+
+        for file in json_files:
+            try:
+                with zipfile_ref.open(file) as f:
+                    # Check if it's valid JSON array with required structure
+                    data = json.load(f)
+                    if isinstance(data, list) and len(data) > 0:
+                        first_item = data[0]
+                        # Check if the JSON structure matches Google Takeout format
+                        required_fields = {
+                            "header",
+                            "title",
+                            "time",
+                            "products",
+                            "titleUrl",
+                        }
+                        if (
+                            required_fields.issubset(first_item.keys())
+                            and isinstance(first_item["products"], list)
+                            and any(
+                                product in ["Search", "Google Suche"]
+                                for product in first_item["products"]
+                            )
+                        ):
+                            return data
+            except (json.JSONDecodeError, KeyError, AttributeError):
+                continue
+
+    except Exception as e:
+        raise Exception(f"Error searching zip file: {str(e)}")
+
+    raise GoogleTakeoutNotFoundError("No valid Google Takeout data found in zip file")
