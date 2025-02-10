@@ -81,9 +81,9 @@ def render_donation_page(body):
     header = props.PropsUIHeader(
         props.Translatable(
             {
-                "en": "Port flow example",
-                "de": "Port Beispiel",
-                "nl": "Port voorbeeld flow",
+                "en": "Google Search History",
+                "de": "Google Suchverlauf",
+                "nl": "Google Zoekgeschiedenis",
             }
         )
     )
@@ -114,8 +114,8 @@ def retry_confirmation():
 def prompt_file(extensions):
     description = props.Translatable(
         {
-            "en": "Please select any zip file stored on your device.",
-            "de": "Wählen Sie eine beliebige Zip-Datei aus, die Sie auf Ihrem Gerät gespeichert haben.",
+            "en": "Please select the zip file that you downloaded with your Google search history.",
+            "de": "Wählen Sie bitte die heruntergeladene ZIP Datei aus mit Ihren Google Suchverlauf.",
             "nl": "Selecteer een willekeurige zip file die u heeft opgeslagen op uw apparaat.",
         }
     )
@@ -161,17 +161,17 @@ def extract_file(zipfile_ref, filename):
 def prompt_consent(data, meta_data):
     search_title = props.Translatable(
         {
-            "en": "Search history",
-            "de": "Suchverlauf",
-            "nl": "Zoekgeschiedenis",
+            "en": "Search terms",
+            "de": "Suchbegriffe",
+            "nl": "Zoektermen",
         }
     )
 
     clicks_title = props.Translatable(
         {
-            "en": "Clicked results",
-            "de": "Angeklickte Ergebnisse",
-            "nl": "Aangeklikte resultaten",
+            "en": "Clicked search results",
+            "de": "Angeklickte Suchergebnisse",
+            "nl": "Aangeklikte zoekresultaten",
         }
     )
 
@@ -227,8 +227,8 @@ def is_google_search_url(url):
 
 def extract_search_data(data):
     if not isinstance(data, list):
-        return pd.DataFrame(columns=["date", "index", "query"]), pd.DataFrame(
-            columns=["date", "index", "title", "url"]
+        return pd.DataFrame(columns=["Datum", "Befehl", "Suchbegriff"]), pd.DataFrame(
+            columns=["Datum", "Befehl", "Suchergebnis", "URL"]
         )
 
     searches = []

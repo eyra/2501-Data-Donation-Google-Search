@@ -458,7 +458,7 @@ interface Copy {
 
 const link = new TextBundle()
   .add('en', 'Check out')
-  .add('de', 'Weiter')
+  .add('de', 'Anzeigen')
   .add('nl', 'Bekijk')
 
 const searchPlaceholder = new TextBundle()
@@ -479,7 +479,7 @@ const noDataLeftLabel = new TextBundle()
 const noResultsLabel = new TextBundle()
   .add('en', 'No search results')
   .add('de', 'Keine Suchergebnisse')
-  .add('nl', 'Geen zoek resultaten')
+  .add('nl', 'Geen zoekresultaten')
 
 const editLabel = new TextBundle()
   .add('en', 'Adjust')
