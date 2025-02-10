@@ -227,10 +227,10 @@ def is_google_search_url(url):
 
 def extract_search_data(data):
     if not isinstance(data, list):
-        return pd.DataFrame(columns=["Datum", "Befehl", "Suchbegriff"]), pd.DataFrame(
-            columns=["Datum", "Befehl", "Suchergebnis", "URL"]
+        return pd.DataFrame(columns=["date", "index", "query"]), pd.DataFrame(
+            columns=["date", "index", "title", "url"]
         )
-
+    
     searches = []
     clicks = []
 
