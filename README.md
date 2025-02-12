@@ -1,3 +1,6 @@
+# Google Search Data Donation Script - GESIS
+This script was developed by Eyra for a data donation study of Sina Chen and Barbara Binder (GESIS Leibniz Institute for the Social Sciences, Germany). The repository is based on the Feldspar repository described below.
+
 # Feldspar
 
 Integration mechanism for developers to build an extension (flow application) that can be hosted on the Next platform. This is for example used in the Port program for data donation, as described below. 
