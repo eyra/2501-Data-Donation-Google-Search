@@ -36,8 +36,8 @@ def sample_search_data():
 @pytest.fixture
 def expected_columns():
     return {
-        "searches": ["date", "index", "query"],
-        "clicks": ["date", "index", "title", "url"],
+        "searches": ["Datum", "Befehl", "Suchbegriff"],
+        "clicks": ["Datum", "Befehl", "Suchergebnis", "URL"],
     }
 
 
@@ -46,7 +46,7 @@ def assert_dataframe_structure(df, expected_cols, df_type="searches"):
     assert list(df.columns) == expected_cols
     if len(df) > 0:
         # Check date format (DD-MM-YYYY)
-        assert all(df["date"].str.match(r"^[0-9]{2}-[0-9]{2}-[0-9]{4}$"))
+        assert all(df["Datum"].str.match(r"^[0-9]{2}-[0-9]{2}-[0-9]{4}$"))
 
 
 def test_extract_search_data(sample_search_data, expected_columns):
@@ -55,15 +55,15 @@ def test_extract_search_data(sample_search_data, expected_columns):
     # Test searches dataframe
     assert len(searches_df) == 2
     assert_dataframe_structure(searches_df, expected_columns["searches"])
-    assert searches_df["query"].tolist() == ["test query", "another search"]
-    assert all(searches_df["date"].str.startswith("09-02-2025"))  # Changed to February
+    assert searches_df["Suchbegriff"].tolist() == ["test query", "another search"]
+    assert all(searches_df["Datum"].str.startswith("09-02-2025"))  # Changed to February
 
     # Test clicks dataframe
     assert len(clicks_df) == 1
     assert_dataframe_structure(clicks_df, expected_columns["clicks"])
-    assert clicks_df["title"].iloc[0] == "Test Result Page"
-    assert clicks_df["url"].iloc[0] == "https://example.com/test"
-    assert clicks_df["date"].iloc[0] == "09-02-2025"
+    assert clicks_df["Suchergebnis"].iloc[0] == "Test Result Page"
+    assert clicks_df["URL"].iloc[0] == "https://example.com/test"
+    assert clicks_df["Datum"].iloc[0] == "09-02-2025"
 
 
 def test_extract_search_data_empty(expected_columns):
@@ -117,7 +117,7 @@ def test_extract_search_data_viewed_items_skipped():
 
     searches_df, clicks_df = extract_search_data(data)
     assert len(searches_df) == 1
-    assert searches_df["query"].iloc[0] == "cookies"
+    assert searches_df["Suchbegriff"].iloc[0] == "cookies"
     assert len(clicks_df) == 0
 
 
@@ -335,7 +335,7 @@ def test_extract_search_data_with_google_redirect_url():
     assert len(searches_df) == 0
     assert len(clicks_df) == 1
     assert (
-        clicks_df["url"].iloc[0]
+        clicks_df["URL"].iloc[0]
         == "https://www.tagesschau.de/inland/bundestagswahl/tv-duell-habeck-absage-100.html"
     )
 
@@ -358,7 +358,7 @@ def test_extract_search_data_index_enumeration():
         },
     ]
     searches_df, clicks_df = extract_search_data(data)
-    assert list(searches_df["index"]) == ["1", "2"]
+    assert list(searches_df["Befehl"]) == ["1", "2"]
 
 
 def test_extract_search_data_date_range():
@@ -394,4 +394,4 @@ def test_extract_search_data_date_range():
     ]
     searches_df, clicks_df = extract_search_data(data)
     assert len(searches_df) == 3
-    assert list(searches_df["index"]) == ["1", "2", "3"]
+    assert list(searches_df["Befehl"]) == ["1", "2", "3"]
