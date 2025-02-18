@@ -36,8 +36,8 @@ def sample_search_data():
 @pytest.fixture
 def expected_columns():
     return {
-        "searches": ["Datum", "Befehl", "Suchbegriff"],
-        "clicks": ["Datum", "Befehl", "Suchergebnis", "URL"],
+        "searches": ["Datum", "Nummer", "Suchbegriff"],
+        "clicks": ["Datum", "Nummer", "Suchergebnis", "Link"],
     }
 
 
@@ -62,7 +62,7 @@ def test_extract_search_data(sample_search_data, expected_columns):
     assert len(clicks_df) == 1
     assert_dataframe_structure(clicks_df, expected_columns["clicks"])
     assert clicks_df["Suchergebnis"].iloc[0] == "Test Result Page"
-    assert clicks_df["URL"].iloc[0] == "https://example.com/test"
+    assert clicks_df["Link"].iloc[0] == "https://example.com/test"
     assert clicks_df["Datum"].iloc[0] == "09-02-2025"
 
 
@@ -144,7 +144,7 @@ def test_extract_search_data_visited_items_processed():
     assert len(searches_df) == 0
     assert len(clicks_df) == 1
     assert clicks_df["Suchergebnis"].iloc[0] == "example website"
-    assert clicks_df["URL"].iloc[0] == "https://example.com"
+    assert clicks_df["Link"].iloc[0] == "https://example.com"
 
 
 @pytest.mark.parametrize(
@@ -361,7 +361,7 @@ def test_extract_search_data_with_google_redirect_url():
     assert len(searches_df) == 0
     assert len(clicks_df) == 1
     assert (
-        clicks_df["URL"].iloc[0]
+        clicks_df["Link"].iloc[0]
         == "https://www.tagesschau.de/inland/bundestagswahl/tv-duell-habeck-absage-100.html"
     )
 
@@ -384,7 +384,7 @@ def test_extract_search_data_index_enumeration():
         },
     ]
     searches_df, clicks_df = extract_search_data(data)
-    assert list(searches_df["Befehl"]) == ["1", "2"]
+    assert list(searches_df["Nummer"]) == ["1", "2"]
 
 
 def test_extract_search_data_date_range():
@@ -420,4 +420,4 @@ def test_extract_search_data_date_range():
     ]
     searches_df, clicks_df = extract_search_data(data)
     assert len(searches_df) == 3
-    assert list(searches_df["Befehl"]) == ["1", "2", "3"]
+    assert list(searches_df["Nummer"]) == ["1", "2", "3"]

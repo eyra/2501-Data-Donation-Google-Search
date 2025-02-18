@@ -227,8 +227,8 @@ def is_google_search_url(url):
 
 def extract_search_data(data):
     if not isinstance(data, list):
-        return pd.DataFrame(columns=["Datum", "Befehl", "Suchbegriff"]), pd.DataFrame(
-            columns=["Datum", "Befehl", "Suchergebnis", "URL"]
+        return pd.DataFrame(columns=["Datum", "Nummer", "Suchbegriff"]), pd.DataFrame(
+            columns=["Datum", "Nummer", "Suchergebnis", "Link"]
         )
 
     searches = []
@@ -269,14 +269,14 @@ def extract_search_data(data):
         final_url = resolve_google_redirect(item["titleUrl"])
         is_search, query = is_google_search_url(final_url)
         if is_search:
-            searches.append({"Datum": date, "Befehl": index, "Suchbegriff": query})
+            searches.append({"Datum": date, "Nummer": index, "Suchbegriff": query})
         else:
             clicks.append(
                 {
                     "Datum": date,
-                    "Befehl": index,
+                    "Nummer": index,
                     "Suchergebnis": item["title"],
-                    "URL": final_url,
+                    "Link": final_url,
                 }
             )
 
@@ -284,8 +284,8 @@ def extract_search_data(data):
     clicks_df = pd.DataFrame(clicks)
 
     # Ensure columns exist even if dataframes are empty
-    searches_df = searches_df.reindex(columns=["Datum", "Befehl", "Suchbegriff"])
-    clicks_df = clicks_df.reindex(columns=["Datum", "Befehl", "Suchergebnis", "URL"])
+    searches_df = searches_df.reindex(columns=["Datum", "Nummer", "Suchbegriff"])
+    clicks_df = clicks_df.reindex(columns=["Datum", "Nummer", "Suchergebnis", "Link"])
 
     return searches_df, clicks_df
 
