@@ -230,7 +230,7 @@ def extract_search_data(data):
         return pd.DataFrame(columns=["Datum", "Befehl", "Suchbegriff"]), pd.DataFrame(
             columns=["Datum", "Befehl", "Suchergebnis", "URL"]
         )
-    
+
     searches = []
     clicks = []
 
@@ -253,8 +253,11 @@ def extract_search_data(data):
         if not (start_dt <= timestamp < end_dt):  # Changed <= to < for end_dt
             continue
 
-        if item["title"].startswith("Viewed "):
-            continue
+        title = item["title"]
+        if title.startswith("Visited "):
+            item["title"] = title[len("Visited ") :]
+        elif title.startswith("Viewed "):
+            continue  # Skip Viewed items entirely
 
         records.append(item)
 
@@ -269,7 +272,12 @@ def extract_search_data(data):
             searches.append({"Datum": date, "Befehl": index, "Suchbegriff": query})
         else:
             clicks.append(
-                {"Datum": date, "Befehl": index, "Suchergebnis": item["title"], "URL": final_url}
+                {
+                    "Datum": date,
+                    "Befehl": index,
+                    "Suchergebnis": item["title"],
+                    "URL": final_url,
+                }
             )
 
     searches_df = pd.DataFrame(searches)

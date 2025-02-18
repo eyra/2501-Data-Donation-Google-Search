@@ -121,6 +121,32 @@ def test_extract_search_data_viewed_items_skipped():
     assert len(clicks_df) == 0
 
 
+def test_extract_search_data_visited_items_processed():
+    data = [
+        {
+            "header": "Search",
+            "title": "Visited example website",
+            "titleUrl": "https://www.google.com/url?q=https://example.com",
+            "time": "2025-02-08T09:35:03.562Z",
+            "products": ["Search"],
+        },
+        {
+            "header": "Search",
+            "title": "Viewed another website",
+            "titleUrl": "https://www.google.com/url?q=https://another.com",
+            "time": "2025-02-08T09:35:03.562Z",
+            "products": ["Search"],
+        },
+    ]
+    from port.script import extract_search_data
+
+    searches_df, clicks_df = extract_search_data(data)
+    assert len(searches_df) == 0
+    assert len(clicks_df) == 1
+    assert clicks_df["Suchergebnis"].iloc[0] == "example website"
+    assert clicks_df["URL"].iloc[0] == "https://example.com"
+
+
 @pytest.mark.parametrize(
     "url, expected_query",
     [
