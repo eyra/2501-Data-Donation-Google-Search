@@ -45,6 +45,18 @@ def process(sessionId):
                 data = extract_search_data(json_data)
                 break
 
+            except NoGoogleSearchDataError:
+                meta_data.append(
+                    ("debug", f"{key}: Google Takeout found but no search data")
+                )
+                text = props.Translatable(
+                    {
+                        "de": "Ihr Datenpaket enthält keine Google Suchdaten, da Sie diese entweder beim Datenexport nicht angefordert haben, oder Ihre Privatsphäre-Einstellungen bei Google dies so festlegen. Mit Klicken auf Beenden können Sie Ihre Studienteilnahme abschließen."
+                    }
+                )
+                yield render_donation_page(props.PropsUIPromptMessage(text))
+                break
+
             except GoogleTakeoutNotFoundError:
                 meta_data.append(
                     ("debug", f"{key}: no valid Google Takeout data found")
@@ -242,6 +254,17 @@ def extract_search_data(data):
                 return query["q"][0]
         return url
 
+    def format_title(title):
+        try:
+            parsed = urlparse(title)
+            # Check if it looks like a URL - must have netloc (domain) and valid scheme
+            if parsed.netloc and parsed.scheme in ("http", "https"):
+                # Remove 'www.' prefix if it exists
+                return parsed.netloc.replace("www.", "", 1)
+            return title
+        except Exception:
+            return title
+
     records = []
     for item in data:
         if not all(
@@ -275,7 +298,7 @@ def extract_search_data(data):
                 {
                     "Datum": date,
                     "Nummer": index,
-                    "Suchergebnis": item["title"],
+                    "Suchergebnis": format_title(item["title"]),
                     "Link": final_url,
                 }
             )
@@ -296,10 +319,17 @@ class GoogleTakeoutNotFoundError(Exception):
     pass
 
 
+class NoGoogleSearchDataError(Exception):
+    """Raised when a Google Takeout archive is found but contains no search data"""
+
+    pass
+
+
 def find_google_search_export(zipfile_ref):
     """
     Find and validate Google Search export JSON files in a zip archive.
-    Validates only the JSON structure, not the content.
+    First checks if it's a Google Takeout archive by looking for the marker HTML file.
+    Then validates the JSON structure.
 
     Args:
         zipfile_ref: ZipFile object to search through
@@ -309,40 +339,60 @@ def find_google_search_export(zipfile_ref):
 
     Raises:
         GoogleTakeoutNotFoundError: If no valid Google Takeout data is found
+        NoGoogleSearchDataError: If valid Google Takeout is found but contains no search data
         Exception: For other errors during processing
     """
-    try:
-        # Get all JSON files from the zip
-        json_files = [f for f in zipfile_ref.namelist() if f.lower().endswith(".json")]
+    # First check if this is a Google Takeout archive by looking for marker HTML
+    html_files = [
+        f
+        for f in zipfile_ref.namelist()
+        if f.lower().endswith(".html") and "/" not in f
+    ]
+    is_google_takeout = False
+    for html_file in html_files:
+        try:
+            with zipfile_ref.open(html_file) as f:
+                content = f.read().decode("utf-8")
+                if "Google" in content:
+                    is_google_takeout = True
+                    break
+        except Exception:
+            continue
 
-        for file in json_files:
-            try:
-                with zipfile_ref.open(file) as f:
-                    # Check if it's valid JSON array with required structure
-                    data = json.load(f)
-                    if isinstance(data, list) and len(data) > 0:
-                        first_item = data[0]
-                        # Check if the JSON structure matches Google Takeout format
-                        required_fields = {
-                            "header",
-                            "title",
-                            "time",
-                            "products",
-                            "titleUrl",
-                        }
-                        if (
-                            required_fields.issubset(first_item.keys())
-                            and isinstance(first_item["products"], list)
-                            and any(
-                                product in ["Search", "Google Suche"]
-                                for product in first_item["products"]
-                            )
-                        ):
-                            return data
-            except (json.JSONDecodeError, KeyError, AttributeError):
-                continue
+    # Get all JSON files from the zip
+    json_files = [f for f in zipfile_ref.namelist() if f.lower().endswith(".json")]
 
-    except Exception as e:
-        raise Exception(f"Error searching zip file: {str(e)}")
+    for file in json_files:
+        try:
+            with zipfile_ref.open(file) as f:
+                # Check if it's valid JSON array with required structure
+                data = json.load(f)
+                if isinstance(data, list) and len(data) > 0:
+                    first_item = data[0]
+                    # Check if the JSON structure matches Google Takeout format
+                    required_fields = {
+                        "header",
+                        "title",
+                        "time",
+                        "products",
+                        "titleUrl",
+                    }
+                    if (
+                        required_fields.issubset(first_item.keys())
+                        and isinstance(first_item["products"], list)
+                        and any(
+                            product in ["Search", "Google Suche"]
+                            for product in first_item["products"]
+                        )
+                    ):
+                        return data
+
+        except (json.JSONDecodeError, KeyError, AttributeError):
+            continue
+
+    # If we found the Google Takeout marker but no search data, raise a specific error
+    if is_google_takeout:
+        raise NoGoogleSearchDataError()
+
 
     raise GoogleTakeoutNotFoundError("No valid Google Takeout data found in zip file")

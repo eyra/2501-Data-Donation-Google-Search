@@ -1,7 +1,13 @@
 import pytest
 import json
 import pandas as pd
-from port.script import extract_search_data, is_google_search_url
+from port.script import (
+    extract_search_data,
+    is_google_search_url,
+    GoogleTakeoutNotFoundError,
+    NoGoogleSearchDataError,
+    find_google_search_export,
+)
 import zipfile
 from io import BytesIO
 
@@ -421,3 +427,54 @@ def test_extract_search_data_date_range():
     searches_df, clicks_df = extract_search_data(data)
     assert len(searches_df) == 3
     assert list(searches_df["Nummer"]) == ["1", "2", "3"]
+
+
+def test_extract_search_data_url_titles():
+    data = [
+        {
+            "header": "Google Suche",
+            "title": "https://example.com/some/long/path",
+            "titleUrl": "https://www.google.com/url?q=https://example.com/some/long/path",
+            "time": "2025-02-09T14:39:34.364Z",
+            "products": ["Google Suche"],
+        },
+        {
+            "header": "Google Suche",
+            "title": "https://www.test-site.org/page",
+            "titleUrl": "https://www.google.com/url?q=https://www.test-site.org/page",
+            "time": "2025-02-09T14:39:42.587Z",
+            "products": ["Google Suche"],
+        },
+        {
+            "header": "Google Suche",
+            "title": "Regular Title",
+            "titleUrl": "https://example.net/page",
+            "time": "2025-02-09T14:40:00.000Z",
+            "products": ["Google Suche"],
+        },
+    ]
+    searches_df, clicks_df = extract_search_data(data)
+
+    assert len(clicks_df) == 3
+    assert clicks_df["Suchergebnis"].tolist() == [
+        "example.com",
+        "test-site.org",
+        "Regular Title",
+    ]
+
+
+def test_find_google_search_export_empty_google_takeout():
+    """Test detection of Google Takeout archives that don't contain search data"""
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        # Add the Google Takeout marker HTML file
+        html_content = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Google Data Export Archive Contents</title>'
+        zf.writestr("index.html", html_content)
+        # Add some other non-search data
+        other_data = [{"header": "Maps", "products": ["Maps"]}]
+        zf.writestr("Takeout/Maps/MyActivity.json", json.dumps(other_data))
+    zip_buffer.seek(0)
+    test_zip = zipfile.ZipFile(zip_buffer)
+
+    with pytest.raises(NoGoogleSearchDataError):
+        find_google_search_export(test_zip)
