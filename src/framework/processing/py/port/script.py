@@ -46,16 +46,10 @@ def process(sessionId):
                 break
 
             except NoGoogleSearchDataError:
-                meta_data.append(
-                    ("debug", f"{key}: Google Takeout found but no search data")
-                )
-                text = props.Translatable(
-                    {
-                        "de": "Ihr Datenpaket enthält keine Google Suchdaten, da Sie diese entweder beim Datenexport nicht angefordert haben, oder Ihre Privatsphäre-Einstellungen bei Google dies so festlegen. Mit Klicken auf Beenden können Sie Ihre Studienteilnahme abschließen."
-                    }
-                )
-                yield render_donation_page(props.PropsUIPromptMessage(text))
-                break
+                value = json.dumps('{"status" : "no-search-data"}')
+                yield donate(f"{sessionId}-{key}", value)
+                yield render_no_search_data_page()
+                return
 
             except GoogleTakeoutNotFoundError:
                 meta_data.append(
@@ -101,6 +95,37 @@ def render_donation_page(body):
     )
 
     page = props.PropsUIPageDonation("Zip", header, body)
+    return CommandUIRender(page)
+
+
+def render_no_search_data_page():
+    header = props.PropsUIHeader(
+        props.Translatable(
+            {
+                "en": "No Google Search Data",
+                "de": "Keine Google Suchdaten",
+                "nl": "Geen Google Zoekgegevens",
+            }
+        )
+    )
+
+    body = props.PropsUIPromptConfirm(
+        text=props.Translatable(
+            {
+                "en": "Your data package does not contain any Google search data, either because you did not request it during data export, or your privacy settings at Google are set this way. By clicking End, you can complete your study participation.",
+                "de": "Ihr Datenpaket enthält keine Google Suchdaten, da Sie diese entweder beim Datenexport nicht angefordert haben, oder Ihre Privatsphäre-Einstellungen bei Google dies so festlegen. Mit Klicken auf Beenden können Sie Ihre Studienteilnahme abschließen.",
+                "nl": "Uw datapakket bevat geen Google-zoekgegevens, omdat u deze niet hebt aangevraagd tijdens de gegevensexport, of omdat uw privacy-instellingen bij Google zo zijn ingesteld. Door op Beëindigen te klikken, kunt u uw deelname aan de studie voltooien.",
+            }
+        ),
+        ok=props.Translatable(
+            {
+                "en": "End",
+                "de": "Beenden",
+                "nl": "Beëindigen",
+            }
+        ),
+    )
+    page = props.PropsUIPageDonation("NoGoogleSearchData", header, body)
     return CommandUIRender(page)
 
 
@@ -342,22 +367,6 @@ def find_google_search_export(zipfile_ref):
         NoGoogleSearchDataError: If valid Google Takeout is found but contains no search data
         Exception: For other errors during processing
     """
-    # First check if this is a Google Takeout archive by looking for marker HTML
-    html_files = [
-        f
-        for f in zipfile_ref.namelist()
-        if f.lower().endswith(".html") and "/" not in f
-    ]
-    is_google_takeout = False
-    for html_file in html_files:
-        try:
-            with zipfile_ref.open(html_file) as f:
-                content = f.read().decode("utf-8")
-                if "Google" in content:
-                    is_google_takeout = True
-                    break
-        except Exception:
-            continue
 
     # Get all JSON files from the zip
     json_files = [f for f in zipfile_ref.namelist() if f.lower().endswith(".json")]
@@ -390,9 +399,20 @@ def find_google_search_export(zipfile_ref):
         except (json.JSONDecodeError, KeyError, AttributeError):
             continue
 
-    # If we found the Google Takeout marker but no search data, raise a specific error
-    if is_google_takeout:
-        raise NoGoogleSearchDataError()
+    # First check if this is a Google Takeout archive by looking for marker HTML
+    html_files = [f for f in zipfile_ref.namelist() if f.lower().endswith(".html")]
 
+    for f in zipfile_ref.namelist():
+        print(f)
+
+    for html_file in html_files:
+        with zipfile_ref.open(html_file) as f:
+            try:
+                content = f.read().decode("utf-8")
+            except Exception:
+                continue
+            if "Google" in content:
+                print("Found Google Takeout archive")
+                raise NoGoogleSearchDataError()
 
     raise GoogleTakeoutNotFoundError("No valid Google Takeout data found in zip file")

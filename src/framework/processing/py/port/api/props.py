@@ -70,19 +70,20 @@ class PropsUIPromptConfirm:
     Attributes:
         text: message to display
         ok: message to display if the user wants to try again
-        cancel: message to display if the user wants to continue regardless
+        cancel: optional message to display if the user wants to continue regardless
     """
 
     text: Translatable
     ok: Translatable
-    cancel: Translatable
+    cancel: Optional[Translatable] = None
 
     def toDict(self):
         dict = {}
         dict["__type__"] = "PropsUIPromptConfirm"
         dict["text"] = self.text.toDict()
         dict["ok"] = self.ok.toDict()
-        dict["cancel"] = self.cancel.toDict()
+        if self.cancel:
+            dict["cancel"] = self.cancel.toDict()
         return dict
 
 
@@ -169,7 +170,7 @@ class PropsUIPromptFileInput:
 
 @dataclass
 class PropsUIPromptProgress:
-    """Prompt the user information during the extraction 
+    """Prompt the user information during the extraction
 
     Attributes:
         description: text with an explanation
@@ -186,7 +187,7 @@ class PropsUIPromptProgress:
         dict["description"] = self.description.toDict()
         dict["message"] = self.message
         dict["percentage"] = self.percentage
-        
+
         return dict
 
 
@@ -239,7 +240,12 @@ class PropsUIPageDonation:
 
     platform: str
     header: PropsUIHeader
-    body: PropsUIPromptRadioInput | PropsUIPromptConsentForm | PropsUIPromptFileInput | PropsUIPromptConfirm
+    body: (
+        PropsUIPromptRadioInput
+        | PropsUIPromptConsentForm
+        | PropsUIPromptFileInput
+        | PropsUIPromptConfirm
+    )
 
     def toDict(self):
         dict = {}
