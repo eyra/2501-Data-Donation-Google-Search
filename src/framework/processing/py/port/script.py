@@ -59,8 +59,9 @@ def process(sessionId):
                 if retry_result.__type__ == "PayloadTrue":
                     continue
                 else:
-                    meta_data.append(("debug", f"{key}: user cancelled"))
-                    break
+                    value = json.dumps('{"status" : "no-google-takeout-found"}')
+                    yield donate(f"{sessionId}-{key}", value)
+                    return
             except Exception as e:
                 meta_data.append(("debug", f"{key}: error processing file - {str(e)}"))
                 retry_result = yield render_donation_page(retry_confirmation())
