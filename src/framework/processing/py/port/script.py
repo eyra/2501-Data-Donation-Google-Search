@@ -2,11 +2,15 @@ import port.api.props as props
 from port.api.assets import *
 from port.api.commands import CommandSystemDonate, CommandSystemExit, CommandUIRender
 
+import dateutil.parser
 import pandas as pd
 import zipfile
 import json
-import time
 from urllib.parse import urlparse, parse_qs
+from bs4 import BeautifulSoup
+import dateutil.tz
+
+german_tz = dateutil.tz.gettz("Europe/Berlin")
 
 # Use timezone-aware timestamps for comparison
 start_dt = pd.to_datetime("2025-01-12").tz_localize("CET")
@@ -28,13 +32,13 @@ def process(sessionId):
         fileResult = yield render_donation_page(promptFile)
 
         if fileResult.__type__ == "PayloadString":
+            meta_data.append(("debug", f"{key}: searching for Google Takeout data"))
             try:
                 # Try to find and extract Google Takeout data
-                meta_data.append(("debug", f"{key}: searching for Google Takeout data"))
                 zipfile_ref = get_zipfile(fileResult.value)
 
                 if zipfile_ref == "invalid":
-                    raise Exception("Invalid zip file")
+                    raise zipfile.BadZipFile("Invalid zip file")
 
                 # Find and parse the Google Search export
                 json_data = find_google_search_export(zipfile_ref)
@@ -62,7 +66,7 @@ def process(sessionId):
                     value = json.dumps('{"status" : "no-google-takeout-found"}')
                     yield donate(f"{sessionId}-{key}", value)
                     return
-            except Exception as e:
+            except (zipfile.BadZipFile, IOError) as e:
                 meta_data.append(("debug", f"{key}: error processing file - {str(e)}"))
                 retry_result = yield render_donation_page(retry_confirmation())
                 if retry_result.__type__ == "PayloadTrue":
@@ -176,14 +180,14 @@ def prompt_extraction_message(message, percentage):
 def get_zipfile(filename):
     try:
         return zipfile.ZipFile(filename)
-    except zipfile.error:
+    except (zipfile.BadZipFile, zipfile.LargeZipFile) as e:
         return "invalid"
 
 
 def get_files(zipfile_ref):
     try:
         return zipfile_ref.namelist()
-    except zipfile.error:
+    except (zipfile.BadZipFile, AttributeError) as e:
         return []
 
 
@@ -192,7 +196,7 @@ def extract_file(zipfile_ref, filename):
         # make it slow for demo reasons only
         info = zipfile_ref.getinfo(filename)
         return (filename, info.compress_size, info.file_size)
-    except zipfile.error:
+    except (zipfile.BadZipFile, KeyError) as e:
         return "invalid"
 
 
@@ -252,13 +256,19 @@ def is_google_search_url(url):
         tuple: (is_search, query) where is_search is boolean and query is the search term or None
     """
     try:
+        if not url:  # Handle None or empty string
+            return False, None
+
         parsed_url = urlparse(url)
+        if not parsed_url.netloc:  # Handle invalid URLs
+            return False, None
+
         # Check if domain is a Google domain (e.g., www.google.com, www.google.de)
         if parsed_url.netloc.startswith("www.google.") and parsed_url.path == "/search":
             query_params = parse_qs(parsed_url.query)
             if "q" in query_params:
                 return True, query_params["q"][0]
-    except Exception:
+    except (ValueError, AttributeError, TypeError) as e:
         pass
     return False, None
 
@@ -288,7 +298,7 @@ def extract_search_data(data):
                 # Remove 'www.' prefix if it exists
                 return parsed.netloc.replace("www.", "", 1)
             return title
-        except Exception:
+        except (ValueError, AttributeError) as e:
             return title
 
     records = []
@@ -298,19 +308,30 @@ def extract_search_data(data):
         ):
             continue
 
-        timestamp = pd.to_datetime(item["time"])
-        if not (start_dt <= timestamp < end_dt):  # Changed <= to < for end_dt
+        try:
+            timestamp = pd.to_datetime(item["time"])
+
+            # Ensure consistent timezone comparison
+            if timestamp.tz is None:
+                timestamp = timestamp.tz_localize("UTC")
+            if timestamp.tz.zone != "CET":
+                timestamp = timestamp.tz_convert("CET")
+
+            # Strictly enforce the date range
+            if timestamp < start_dt or timestamp > end_dt:
+                continue
+
+            title = item["title"]
+            if title.startswith("Visited "):
+                item["title"] = title[len("Visited ") :]
+            elif title.endswith(" aufgerufen"):
+                item["title"] = title[: -len(" aufgerufen")]
+            elif title.startswith("Viewed ") or title.endswith(" angesehen"):
+                continue  # Skip Viewed items entirely
+
+            records.append(item)
+        except (ValueError, AttributeError) as e:
             continue
-
-        title = item["title"]
-        if title.startswith("Visited "):
-            item["title"] = title[len("Visited ") :]
-        elif title.endswith(" aufgerufen"):
-            item["title"] = title[: -len(" aufgerufen")]
-        elif title.startswith("Viewed ") or title.endswith(" angesehen"):
-            continue  # Skip Viewed items entirely
-
-        records.append(item)
 
     for i, item in enumerate(records, start=1):
         timestamp = pd.to_datetime(item["time"])
@@ -353,69 +374,155 @@ class NoGoogleSearchDataError(Exception):
     pass
 
 
+def parse_google_search_json(file_obj):
+    """
+    Parse Google Search data from a JSON file.
+
+    Args:
+        file_obj: File object containing JSON data
+
+    Returns:
+        list: The parsed activity data if valid search data is found
+        None: If no valid search data is found
+    """
+    try:
+        data = json.load(file_obj)
+    except json.JSONDecodeError:
+        return None
+
+    try:
+        if isinstance(data, list) and len(data) > 0:
+            first_item = data[0]
+            if all(
+                key in first_item
+                for key in ["header", "title", "time", "products", "titleUrl"]
+            ) and any(
+                product in ["Search", "Google Suche"]
+                for product in first_item["products"]
+            ):
+                return data
+    except (KeyError, AttributeError, TypeError):
+        pass
+    return None
+
+
+def parse_google_search_html(html_content):
+    """
+    Parse Google Search data from an HTML file.
+
+    Args:
+        html_content: String containing HTML content
+
+    Returns:
+        list: The parsed activity data if valid search data is found
+        None: If no valid search data is found
+    """
+    soup = BeautifulSoup(html_content, "html.parser")
+
+    activities = []
+
+    # Find all activity entries
+    for cell in soup.find_all("div", class_="outer-cell"):
+        try:
+            # Get header (activity type)
+            try:
+                header_elem = cell.select(".header-cell")[0]
+            except IndexError:
+                continue
+
+            header = header_elem.get_text(strip=True)
+            if "Google Suche" not in header and "Search" not in header:
+                continue
+
+            # Get content
+            try:
+                content = cell.select(".content-cell")[0]
+            except IndexError:
+                continue
+
+            # Extract URL before removing the link
+            link = content.find("a")
+            title_url = ""
+            if link and "href" in link.attrs:
+                title_url = link["href"]
+
+            parts = list(content.stripped_strings)
+
+            if len(parts) == 3:
+                title = " ".join(parts[:-1])
+
+                try:
+                    timestamp = dateutil.parser.parse(
+                        parts[-1],
+                        tzinfos={
+                            "MEZ": german_tz,
+                        },
+                    )
+                except dateutil.parser.ParserError:
+                    continue
+
+                activity = {
+                    "header": header,
+                    "title": title,
+                    "titleUrl": title_url,
+                    "time": timestamp.isoformat(),
+                    "products": ["Google Suche"],
+                }
+                activities.append(activity)
+
+        except (AttributeError, IndexError, KeyError) as e:
+            continue
+
+    return activities if activities else None
+
+
 def find_google_search_export(zipfile_ref):
     """
-    Find and validate Google Search export JSON files in a zip archive.
-    First checks if it's a Google Takeout archive by looking for the marker HTML file.
-    Then validates the JSON structure.
+    Find and validate Google Search export files in a zip archive.
+    Supports both JSON and HTML formats from Google Takeout.
 
     Args:
         zipfile_ref: ZipFile object to search through
 
     Returns:
-        list: The parsed JSON data if found
+        list: The parsed activity data if found
 
     Raises:
         GoogleTakeoutNotFoundError: If no valid Google Takeout data is found
         NoGoogleSearchDataError: If valid Google Takeout is found but contains no search data
-        Exception: For other errors during processing
     """
 
-    # Get all JSON files from the zip
+    # First try JSON files
     json_files = [f for f in zipfile_ref.namelist() if f.lower().endswith(".json")]
-
     for file in json_files:
         try:
             with zipfile_ref.open(file) as f:
-                # Check if it's valid JSON array with required structure
-                data = json.load(f)
-                if isinstance(data, list) and len(data) > 0:
-                    first_item = data[0]
-                    # Check if the JSON structure matches Google Takeout format
-                    required_fields = {
-                        "header",
-                        "title",
-                        "time",
-                        "products",
-                        "titleUrl",
-                    }
-                    if (
-                        required_fields.issubset(first_item.keys())
-                        and isinstance(first_item["products"], list)
-                        and any(
-                            product in ["Search", "Google Suche"]
-                            for product in first_item["products"]
-                        )
-                    ):
-                        return data
-
-        except (json.JSONDecodeError, KeyError, AttributeError):
+                data = parse_google_search_json(f)
+                if data:
+                    return data
+        except (zipfile.BadZipFile, IOError, UnicodeDecodeError) as e:
             continue
 
-    # First check if this is a Google Takeout archive by looking for marker HTML
+    # Then try HTML files
     html_files = [f for f in zipfile_ref.namelist() if f.lower().endswith(".html")]
+    for file in html_files:
+        try:
+            with zipfile_ref.open(file) as f:
+                html_content = f.read().decode("utf-8")
+                data = parse_google_search_html(html_content)
+                if data:
+                    return data
+        except (zipfile.BadZipFile, IOError, UnicodeDecodeError) as e:
+            continue
 
-    for f in zipfile_ref.namelist():
-        print(f)
-
+    # First check if this is a Google Takeout archive
     for html_file in html_files:
-        with zipfile_ref.open(html_file) as f:
-            try:
+        try:
+            with zipfile_ref.open(html_file) as f:
                 content = f.read().decode("utf-8")
-            except Exception:
-                continue
-            if "Google" in content:
-                print("Found Google Takeout archive")
-                raise NoGoogleSearchDataError()
+                if "Google" in content:
+                    raise NoGoogleSearchDataError()
+        except (zipfile.BadZipFile, IOError, UnicodeDecodeError) as e:
+            continue
 
     raise GoogleTakeoutNotFoundError("No valid Google Takeout data found in zip file")

@@ -7,9 +7,11 @@ from port.script import (
     GoogleTakeoutNotFoundError,
     NoGoogleSearchDataError,
     find_google_search_export,
+    parse_google_search_json,
+    parse_google_search_html,
 )
 import zipfile
-from io import BytesIO
+from io import BytesIO, StringIO
 
 
 @pytest.fixture
@@ -531,3 +533,188 @@ def test_extract_search_data_german_clicked_items():
     assert clicks_df["Link"].iloc[0] == "https://example.com"
     assert clicks_df["Suchergebnis"].iloc[1] == "Test Website"
     assert clicks_df["Link"].iloc[1] == "https://test.com"
+
+
+def test_parse_google_search_json_valid():
+    valid_json = json.dumps(
+        [
+            {
+                "header": "Google Suche",
+                "title": "Test search",
+                "titleUrl": "https://www.google.com/search?q=test",
+                "time": "2025-01-09T14:39:34.364Z",
+                "products": ["Google Suche"],
+            }
+        ]
+    )
+    from io import StringIO
+
+    data = parse_google_search_json(StringIO(valid_json))
+    assert data is not None
+    assert len(data) == 1
+    assert data[0]["header"] == "Google Suche"
+    assert data[0]["title"] == "Test search"
+
+
+def test_parse_google_search_json_invalid():
+    invalid_cases = [
+        "[]",  # Empty array
+        "[{}]",  # Missing required fields
+        '{"not": "an array"}',  # Not an array
+        "invalid json",  # Invalid JSON
+    ]
+    for invalid_json in invalid_cases:
+        from io import StringIO
+
+        data = parse_google_search_json(StringIO(invalid_json))
+        assert data is None
+
+
+def test_parse_google_search_html_valid_query():
+    valid_html = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Google Account - Aktivitäten</title></head>
+    <body>
+        <div class="outer-cell">
+            <div class="header-cell">
+                <p>Google Suche<br /></p>
+            </div>
+            <div class="content-cell">
+            Gesucht nach: <a
+              href="https://www.google.com/search?q=dominosteine+rezept"
+              >dominosteine rezept</a
+            ><br />10.01.2025, 17:21:55 MEZ
+          </div>
+        </div>
+    </body>
+    </html>
+    """
+    data = parse_google_search_html(valid_html)
+    assert data is not None
+    assert len(data) == 1
+    assert data[0]["header"] == "Google Suche"
+    assert data[0]["title"] == "Gesucht nach: dominosteine rezept"
+    assert data[0]["titleUrl"] == "https://www.google.com/search?q=dominosteine+rezept"
+    assert data[0]["time"] == "2025-10-01T17:21:55+02:00"
+    assert data[0]["products"] == ["Google Suche"]
+
+
+def test_parse_google_search_html_valid_clicked():
+    valid_html = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Google Account - Aktivitäten</title></head>
+    <body>
+        <div class="outer-cell">
+            <div class="header-cell">
+                <p>Google Suche<br /></p>
+            </div>
+            <div
+            class="content-cell mdl-cell mdl-cell--6-col mdl-typography--body-1"
+          >
+            <a
+              href="https://www.google.com/url?q=https://www.koffer-direkt.de/products/vaude-city-duffel-65-reisetasche-70-cm-baltic-sea%3Fkendall_source%3Dgoogle%26kendall_campaign%3D21057346217%26kendall_adid%3D%26gad_source%3D1%26gbraid%3D%7Bgbraid%7D&amp;usg=AOvVaw27Xv9b_daTH0gg0SIyPqu5"
+              >https://www.koffer-direkt.de/products/vaude-city-duffel-65-reisetasche-70-cm-baltic-sea?kendall_source=google&amp;kendall_campaign=21057346217&amp;kendall_adid=&amp;gad_source=1&amp;gbraid={gbraid}</a
+            > aufgerufen<br />10.01.2025, 17:34:42 MEZ
+          </div>
+        </div>
+    </body>
+    </html>
+    """
+    data = parse_google_search_html(valid_html)
+    assert data is not None
+    assert len(data) == 1
+    assert data[0]["header"] == "Google Suche"
+    assert (
+        data[0]["title"]
+        == "https://www.koffer-direkt.de/products/vaude-city-duffel-65-reisetasche-70-cm-baltic-sea?kendall_source\u003dgoogle\u0026kendall_campaign\u003d21057346217\u0026kendall_adid\u003d\u0026gad_source\u003d1\u0026gbraid\u003d{gbraid} aufgerufen"
+    )
+    assert (
+        data[0]["titleUrl"]
+        == "https://www.google.com/url?q\u003dhttps://www.koffer-direkt.de/products/vaude-city-duffel-65-reisetasche-70-cm-baltic-sea%3Fkendall_source%3Dgoogle%26kendall_campaign%3D21057346217%26kendall_adid%3D%26gad_source%3D1%26gbraid%3D%7Bgbraid%7D\u0026usg\u003dAOvVaw27Xv9b_daTH0gg0SIyPqu5"
+    )
+    assert data[0]["time"] == "2025-10-01T17:34:42+02:00"
+    assert data[0]["products"] == ["Google Suche"]
+
+
+def test_parse_google_search_html_invalid():
+    invalid_cases = [
+        "<html></html>",  # Empty HTML
+        "<html><head><title>Not Google</title></head></html>",  # Wrong title
+        "<html><head><title>Google</title></head><body><div>No activity data</div></body></html>",  # Missing activity data
+        "invalid html",  # Invalid HTML
+    ]
+    for invalid_html in invalid_cases:
+        data = parse_google_search_html(invalid_html)
+        assert data is None
+
+
+def test_parses_json_and_html_in_the_same_way():
+    html = """
+    <html>
+    <head>
+        <title>Mein Aktivitätsverlauf</title>
+    </head>
+    <body>
+        <div class="mdl-grid">
+        <div class="outer-cell mdl-cell mdl-cell--12-col mdl-shadow--2dp">
+            <div class="mdl-grid">
+            <div class="header-cell mdl-cell mdl-cell--12-col">
+                <p class="mdl-typography--title">Google Suche<br /></p>
+            </div>
+            <div
+                class="content-cell mdl-cell mdl-cell--6-col mdl-typography--body-1"
+            >
+                Gesucht nach: <a
+                href="https://www.google.com/search?q=takeout_20250113_mika_html"
+                >takeout_20250113_mika_html</a
+                ><br />13.01.2025, 08:38:09 MEZ
+            </div>
+            <div
+                class="content-cell mdl-cell mdl-cell--6-col mdl-typography--body-1 mdl-typography--text-right"
+            ></div>
+            <div
+                class="content-cell mdl-cell mdl-cell--12-col mdl-typography--caption"
+            >
+                <b>Produkte:</b><br />&emsp;Google Suche<br /><b>Standorte:</b
+                ><br />&emsp;<a
+                href="https://www.google.com/maps/@?api=1&amp;map_action=map&amp;center=49.493809,8.465942&amp;zoom=12"
+                >Ungefähre Gegend</a
+                >
+                - Von meinem Gerät<br /><b>Warum steht das hier?</b
+                ><br />&emsp;Diese Aktivität wurde in Ihrem Google-Konto
+                gespeichert, weil die folgenden Einstellungen aktiviert
+                waren:&nbsp;Web- &amp; App-Aktivitäten.&nbsp;<a
+                href="https://myaccount.google.com/activitycontrols"
+                >Hier können Sie diese Einstellungen bearbeiten.</a
+                >
+            </div>
+            </div>
+        </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    json_str = """
+    [{
+        "header": "Google Suche",
+        "title": "Gesucht nach: takeout_20250113_mika_html",
+        "titleUrl": "https://www.google.com/search?q\u003dtakeout_20250113_mika_html",
+        "time": "2025-01-13T07:38:09.000Z",
+        "products": ["Google Suche"]
+        }]
+    """
+
+    html_results = parse_google_search_html(html)
+    json_results = parse_google_search_json(StringIO(json_str))
+    assert len(html_results) == len(json_results)
+    for html, json in zip(html_results, json_results):
+        # Drop time since they are differently formatted
+        html_time = html.pop("time")
+        json_time = json.pop("time")
+        assert html == json
+        assert pd.to_datetime(html_time).tz_convert("UTC") == pd.to_datetime(
+            json_time
+        ).tz_convert("UTC")
