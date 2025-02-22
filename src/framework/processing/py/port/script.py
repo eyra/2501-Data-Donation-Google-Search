@@ -305,6 +305,8 @@ def extract_search_data(data):
         title = item["title"]
         if title.startswith("Visited "):
             item["title"] = title[len("Visited ") :]
+        elif title.endswith(" aufgerufen"):
+            item["title"] = title[: -len(" aufgerufen")]
         elif title.startswith("Viewed ") or title.endswith(" angesehen"):
             continue  # Skip Viewed items entirely
 

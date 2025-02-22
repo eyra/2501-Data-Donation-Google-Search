@@ -503,3 +503,31 @@ def test_extract_search_data_german_viewed_items():
     assert len(searches_df) == 1
     assert searches_df["Suchbegriff"].iloc[0] == "cookies"
     assert len(clicks_df) == 0
+
+
+def test_extract_search_data_german_clicked_items():
+    data = [
+        {
+            "header": "Search",
+            "title": "Example Site aufgerufen",
+            "titleUrl": "https://www.google.com/url?q=https://example.com",
+            "time": "2025-02-08T09:35:03.562Z",
+            "products": ["Search"],
+        },
+        {
+            "header": "Search",
+            "title": "Test Website aufgerufen",
+            "titleUrl": "https://www.google.com/url?q=https://test.com",
+            "time": "2025-02-08T09:35:03.562Z",
+            "products": ["Search"],
+        },
+    ]
+    from port.script import extract_search_data
+
+    searches_df, clicks_df = extract_search_data(data)
+    assert len(searches_df) == 0
+    assert len(clicks_df) == 2
+    assert clicks_df["Suchergebnis"].iloc[0] == "Example Site"
+    assert clicks_df["Link"].iloc[0] == "https://example.com"
+    assert clicks_df["Suchergebnis"].iloc[1] == "Test Website"
+    assert clicks_df["Link"].iloc[1] == "https://test.com"
