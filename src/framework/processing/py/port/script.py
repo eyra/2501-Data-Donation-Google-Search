@@ -9,6 +9,31 @@ import json
 from urllib.parse import urlparse, parse_qs
 from bs4 import BeautifulSoup
 import dateutil.tz
+import io
+
+import logging
+
+
+# A logging handler that logs all messages to an data frame.
+# The first column is the log level, the second column is the message.
+class DataFrameHandler(logging.Handler):
+    def __init__(self):
+        logging.Handler.__init__(self)
+        self._data = []
+
+    def emit(self, record):
+        self._data.append({"Level": record.levelname, "Message": record.getMessage()})
+
+    @property
+    def df(self):
+        return pd.DataFrame(self._data)
+
+
+# Set up in logging using the dataframe handler
+log_handler = DataFrameHandler()
+logging.basicConfig(handlers=[log_handler], level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 german_tz = dateutil.tz.gettz("Europe/Berlin")
 
@@ -21,18 +46,17 @@ end_dt = pd.to_datetime("2025-03-02").tz_localize("CET") + pd.Timedelta(
 
 def process(sessionId):
     key = "google-search-history"
-    meta_data = []
-    meta_data.append(("debug", f"{key}: start"))
+    logger.info(f"{key}: start")
 
     # STEP 1: select the file
     data = None
     while True:
-        meta_data.append(("debug", f"{key}: prompt file"))
+        logger.info(f"{key}: prompt file")
         promptFile = prompt_file("application/zip")
         fileResult = yield render_donation_page(promptFile)
 
         if fileResult.__type__ == "PayloadString":
-            meta_data.append(("debug", f"{key}: searching for Google Takeout data"))
+            logger.info(f"{key}: searching for Google Takeout data")
             try:
                 # Try to find and extract Google Takeout data
                 zipfile_ref = get_zipfile(fileResult.value)
@@ -42,10 +66,10 @@ def process(sessionId):
 
                 # Find and parse the Google Search export
                 json_data = find_google_search_export(zipfile_ref)
-                meta_data.append(("debug", f"{key}: found valid Google Takeout data"))
+                logger.info(f"{key}: found valid Google Takeout data")
 
                 # Extract search history and clicks into dataframes
-                meta_data.append(("debug", f"{key}: extracting search history"))
+                logger.info(f"{key}: extracting search history")
                 data = extract_search_data(json_data)
                 break
 
@@ -56,9 +80,8 @@ def process(sessionId):
                 return
 
             except GoogleTakeoutNotFoundError:
-                meta_data.append(
-                    ("debug", f"{key}: no valid Google Takeout data found")
-                )
+                logger.info(f"{key}: no valid Google Takeout data found")
+
                 retry_result = yield render_donation_page(retry_confirmation())
                 if retry_result.__type__ == "PayloadTrue":
                     continue
@@ -67,24 +90,26 @@ def process(sessionId):
                     yield donate(f"{sessionId}-{key}", value)
                     return
             except (zipfile.BadZipFile, IOError) as e:
-                meta_data.append(("debug", f"{key}: error processing file - {str(e)}"))
+                logger.info(f"{key}: error processing file - {str(e)}")
                 retry_result = yield render_donation_page(retry_confirmation())
                 if retry_result.__type__ == "PayloadTrue":
                     continue
                 else:
-                    meta_data.append(("debug", f"{key}: user cancelled"))
+                    logger.info(f"{key}: user cancelled")
                     break
 
     # STEP 2: ask for consent
     if data is not None:
-        meta_data.append(("debug", f"{key}: prompt consent"))
-        prompt = prompt_consent(data, meta_data)
+        logger.info(f"{key}: prompt consent")
+        prompt = prompt_consent(data, log_handler.df)
         consent_result = yield render_donation_page(prompt)
         if consent_result.__type__ == "PayloadJSON":
-            meta_data.append(("debug", f"{key}: donate consent data"))
+            logger.info(f"{key}: donate consent data")
             yield donate(f"{sessionId}-{key}", consent_result.value)
         if consent_result.__type__ == "PayloadFalse":
-            value = json.dumps('{"status" : "donation declined"}')
+            value = json.dumps(
+                {"status": "donation declined", "log": log_handler.df.to_dict()}
+            )
             yield donate(f"{sessionId}-{key}", value)
 
 
@@ -229,9 +254,8 @@ def prompt_consent(data, meta_data):
             props.PropsUIPromptConsentFormTable("clicks", clicks_title, clicks_df),
         ]
 
-    meta_frame = pd.DataFrame(meta_data, columns=["type", "message"])
     meta_table = props.PropsUIPromptConsentFormTable(
-        "log_messages", log_title, meta_frame
+        "log_messages", log_title, meta_data
     )
     return props.PropsUIPromptConsentForm(tables, [meta_table])
 
@@ -500,6 +524,8 @@ def find_google_search_export(zipfile_ref):
         NoGoogleSearchDataError: If valid Google Takeout is found but contains no search data
     """
 
+    logger.info("Searching for Google Search data in zip file")
+
     # First try JSON files
     json_files = [f for f in zipfile_ref.namelist() if f.lower().endswith(".json")]
     for file in json_files:
@@ -507,6 +533,7 @@ def find_google_search_export(zipfile_ref):
             with zipfile_ref.open(file) as f:
                 data = parse_google_search_json(f)
                 if data:
+                    logger.info(f"Found Google Search data in {file}")
                     return data
         except (zipfile.BadZipFile, IOError, UnicodeDecodeError) as e:
             continue
@@ -519,6 +546,7 @@ def find_google_search_export(zipfile_ref):
                 html_content = f.read().decode("utf-8")
                 data = parse_google_search_html(html_content)
                 if data:
+                    logger.info(f"Found Google Search data in {file}")
                     return data
         except (zipfile.BadZipFile, IOError, UnicodeDecodeError) as e:
             continue
@@ -529,8 +557,10 @@ def find_google_search_export(zipfile_ref):
             with zipfile_ref.open(html_file) as f:
                 content = f.read().decode("utf-8")
                 if "Google" in content:
+                    logger.error("Google Takeout archive found but no search data")
                     raise NoGoogleSearchDataError()
         except (zipfile.BadZipFile, IOError, UnicodeDecodeError) as e:
             continue
 
+    logger.error("No valid Google Takeout data found in zip file")
     raise GoogleTakeoutNotFoundError("No valid Google Takeout data found in zip file")
