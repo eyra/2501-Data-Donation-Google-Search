@@ -64,7 +64,7 @@ def test_extract_search_data(sample_search_data, expected_columns):
     assert len(searches_df) == 2
     assert_dataframe_structure(searches_df, expected_columns["searches"])
     assert searches_df["Suchbegriff"].tolist() == ["test query", "another search"]
-    assert all(searches_df["Datum"].str.startswith("09-02-2025"))  # Changed to February
+    assert all(searches_df["Datum"].str.startswith("09-02-2025"))
 
     # Test clicks dataframe
     assert len(clicks_df) == 1
@@ -596,7 +596,7 @@ def test_parse_google_search_html_valid_query():
     assert data[0]["header"] == "Google Suche"
     assert data[0]["title"] == "Gesucht nach: dominosteine rezept"
     assert data[0]["titleUrl"] == "https://www.google.com/search?q=dominosteine+rezept"
-    assert data[0]["time"] == "2025-10-01T17:21:55+02:00"
+    assert data[0]["time"] == "2025-01-10T17:21:55+01:00"
     assert data[0]["products"] == ["Google Suche"]
 
 
@@ -634,7 +634,7 @@ def test_parse_google_search_html_valid_clicked():
         data[0]["titleUrl"]
         == "https://www.google.com/url?q\u003dhttps://www.koffer-direkt.de/products/vaude-city-duffel-65-reisetasche-70-cm-baltic-sea%3Fkendall_source%3Dgoogle%26kendall_campaign%3D21057346217%26kendall_adid%3D%26gad_source%3D1%26gbraid%3D%7Bgbraid%7D\u0026usg\u003dAOvVaw27Xv9b_daTH0gg0SIyPqu5"
     )
-    assert data[0]["time"] == "2025-10-01T17:34:42+02:00"
+    assert data[0]["time"] == "2025-01-10T17:34:42+01:00"
     assert data[0]["products"] == ["Google Suche"]
 
 
@@ -718,3 +718,103 @@ def test_parses_json_and_html_in_the_same_way():
         assert pd.to_datetime(html_time).tz_convert("UTC") == pd.to_datetime(
             json_time
         ).tz_convert("UTC")
+
+
+def test_html_parser_uses_day_first_logic_for_dates():
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Google Account - Aktivitäten</title></head>
+    <body>
+        <div class="outer-cell mdl-cell mdl-cell--12-col mdl-shadow--2dp">
+        <div class="mdl-grid">
+          <div class="header-cell mdl-cell mdl-cell--12-col">
+            <p class="mdl-typography--title">Google Suche<br /></p>
+          </div>
+          <div
+            class="content-cell mdl-cell mdl-cell--6-col mdl-typography--body-1"
+          >
+            <a
+              href="https://www.google.com/url?q=https://www.dwd.de/DE/service/lexikon/begriffe/S/Schnee.html&amp;usg=AOvVaw2A5Q4460CYt_dkhMWGX90F"
+              >Wetter und Klima - Deutscher Wetterdienst - Glossar - Schnee</a
+            > aufgerufen<br />09.01.2025, 15:39:46 MEZ
+          </div>
+    """
+    data = parse_google_search_html(html)
+    assert data[0]["time"] == "2025-01-09T15:39:46+01:00"
+
+
+def test_dont_include_google_in_results():
+    data = [
+        {
+            "header": "Google Suche",
+            "title": "Some search",
+            "titleUrl": "https://www.google.com",
+            "time": "2025-02-09T14:39:34.364Z",
+            "products": ["Google Suche"],
+        }
+    ]
+    searches_df, clicks_df = extract_search_data(data)
+    assert len(searches_df) == 0
+    assert len(clicks_df) == 0
+
+
+def test_html_ignores_non_search_data():
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        zf.writestr(
+            "Search/MyActivity.html",
+            """
+            <!DOCTYPE html>
+            <html>
+            <head><title>Google Account - Aktivitäten</title></head>
+            <body>
+                <div class="outer-cell mdl-cell mdl-cell--12-col mdl-shadow--2dp">
+                <div class="mdl-grid">
+                <div class="header-cell mdl-cell mdl-cell--12-col">
+                    <p class="mdl-typography--title">Image Search<br /></p>
+                </div>
+                <div
+                    class="content-cell mdl-cell mdl-cell--6-col mdl-typography--body-1"
+                >
+                    <a
+                    href="https://www.google.com/url?q=https://www.dwd.de/DE/service/lexikon/begriffe/S/Schnee.html&amp;usg=AOvVaw2A5Q4460CYt_dkhMWGX90F"
+                    >Wetter und Klima - Deutscher Wetterdienst - Glossar - Schnee</a
+                    > aufgerufen<br />09.01.2025, 15:39:46 MEZ
+                </div>
+            """.encode(
+                "utf8"
+            ),
+        )
+        with pytest.raises(NoGoogleSearchDataError):
+            find_google_search_export(zf)
+
+
+def test_html_detects_search_data():
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        zf.writestr(
+            "Search/MyActivity.html",
+            """
+            <!DOCTYPE html>
+            <html>
+            <head><title>Google Account - Aktivitäten</title></head>
+            <body>
+                <div class="outer-cell mdl-cell mdl-cell--12-col mdl-shadow--2dp">
+                <div class="mdl-grid">
+                <div class="header-cell mdl-cell mdl-cell--12-col">
+                    <p class="mdl-typography--title">Search<br /></p>
+                </div>
+                <div
+                    class="content-cell mdl-cell mdl-cell--6-col mdl-typography--body-1"
+                >
+                    <a
+                    href="https://www.google.com/url?q=https://www.dwd.de/DE/service/lexikon/begriffe/S/Schnee.html&amp;usg=AOvVaw2A5Q4460CYt_dkhMWGX90F"
+                    >Wetter und Klima - Deutscher Wetterdienst - Glossar - Schnee</a
+                    > aufgerufen<br />09.01.2025, 15:39:46 MEZ
+                </div>
+            """.encode(
+                "utf8"
+            ),
+        )
+        assert find_google_search_export(zf) is not None

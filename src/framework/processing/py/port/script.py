@@ -301,6 +301,10 @@ def extract_search_data(data):
         except (ValueError, AttributeError) as e:
             return title
 
+    def is_google_homepage(url):
+        parsed = urlparse(url)
+        return parsed.netloc.startswith("www.google.") and parsed.path in ["/", ""]
+
     records = []
     for item in data:
         if not all(
@@ -328,6 +332,9 @@ def extract_search_data(data):
                 item["title"] = title[: -len(" aufgerufen")]
             elif title.startswith("Viewed ") or title.endswith(" angesehen"):
                 continue  # Skip Viewed items entirely
+
+            if is_google_homepage(item["titleUrl"]):
+                continue  # Skip Google homepage visits
 
             records.append(item)
         except (ValueError, AttributeError) as e:
@@ -431,7 +438,7 @@ def parse_google_search_html(html_content):
                 continue
 
             header = header_elem.get_text(strip=True)
-            if "Google Suche" not in header and "Search" not in header:
+            if header not in ["Google Suche", "Search"]:
                 continue
 
             # Get content
@@ -457,6 +464,7 @@ def parse_google_search_html(html_content):
                         tzinfos={
                             "MEZ": german_tz,
                         },
+                        dayfirst=True,
                     )
                 except dateutil.parser.ParserError:
                     continue
@@ -503,7 +511,7 @@ def find_google_search_export(zipfile_ref):
         except (zipfile.BadZipFile, IOError, UnicodeDecodeError) as e:
             continue
 
-    # Then try HTML files
+    # Try HTML files
     html_files = [f for f in zipfile_ref.namelist() if f.lower().endswith(".html")]
     for file in html_files:
         try:
@@ -515,7 +523,7 @@ def find_google_search_export(zipfile_ref):
         except (zipfile.BadZipFile, IOError, UnicodeDecodeError) as e:
             continue
 
-    # First check if this is a Google Takeout archive
+    # Check if this is a Google Takeout archive
     for html_file in html_files:
         try:
             with zipfile_ref.open(html_file) as f:
