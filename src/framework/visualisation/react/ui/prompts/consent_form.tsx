@@ -269,5 +269,5 @@ const description = new TextBundle()
   )
   .add(
     "de",
-    "Entscheiden Sie, ob Sie die unten aufgeführten Daten spenden möchten. Sie können die Daten prüfen und bei Bedarf anpassen. Wählen SIe hierzu 'Anpassen' unter der Tabelle aus. Mit Ihrer Spende tragen Sie zur zuvor beschriebenen Forschung bei. Vielen Dank im Voraus."
+    "Entscheiden Sie, ob Sie die unten aufgeführten Daten spenden möchten. Sie können die Daten prüfen und bei Bedarf anpassen. Wählen Sie hierzu 'Anpassen' unter der Tabelle aus. Mit Ihrer Spende tragen Sie zur zuvor beschriebenen Forschung bei. Vielen Dank im Voraus."
   );
